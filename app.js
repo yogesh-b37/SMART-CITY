@@ -1,88 +1,3 @@
-const STORAGE_KEY = "civicpulse-issues-v1";
-
-const sampleIssues = [
-  {
-    id: "CP-2408",
-    title: "Pothole on Maple Street",
-    category: "Roads & sidewalks",
-    location: "Maple St & 4th Ave",
-    status: "open",
-    priority: "High",
-    description: "Large pothole causing cars to swerve into the next lane.",
-    createdAt: daysAgo(0),
-  },
-  {
-    id: "CP-2407",
-    title: "Broken streetlight near park",
-    category: "Street lighting",
-    location: "Riverside Park, north gate",
-    status: "in-progress",
-    priority: "Normal",
-    description: "Streetlight has been out for several nights.",
-    createdAt: daysAgo(1),
-  },
-  {
-    id: "CP-2406",
-    title: "Overflowing recycling bins",
-    category: "Waste & recycling",
-    location: "Oakwood Plaza",
-    status: "open",
-    priority: "Normal",
-    description: "Public recycling bins are full and need collection.",
-    createdAt: daysAgo(1),
-  },
-  {
-    id: "CP-2405",
-    title: "Fallen branch blocking sidewalk",
-    category: "Parks & public spaces",
-    location: "Willow Creek Trail",
-    status: "in-progress",
-    priority: "Urgent",
-    description: "A large branch is blocking the walking path.",
-    createdAt: daysAgo(2),
-  },
-  {
-    id: "CP-2404",
-    title: "Water pooling at crosswalk",
-    category: "Water & drainage",
-    location: "Pine St & 8th Avenue",
-    status: "resolved",
-    priority: "Normal",
-    description: "Standing water at the pedestrian crossing after rain.",
-    createdAt: daysAgo(3),
-  },
-  {
-    id: "CP-2403",
-    title: "Traffic signal timing issue",
-    category: "Traffic & safety",
-    location: "Central Blvd & 2nd St",
-    status: "open",
-    priority: "High",
-    description: "The signal is not giving pedestrians enough crossing time.",
-    createdAt: daysAgo(4),
-  },
-  {
-    id: "CP-2402",
-    title: "Damaged bench in public square",
-    category: "Parks & public spaces",
-    location: "Founders Square",
-    status: "resolved",
-    priority: "Normal",
-    description: "One of the park benches has a damaged seat.",
-    createdAt: daysAgo(7),
-  },
-  {
-    id: "CP-2401",
-    title: "Street sign needs replacement",
-    category: "Roads & sidewalks",
-    location: "Cedar Lane & 3rd St",
-    status: "in-progress",
-    priority: "Normal",
-    description: "The street sign is difficult to read.",
-    createdAt: daysAgo(12),
-  },
-];
-
 const categoryDetails = {
   "Roads & sidewalks": { icon: "🛣️", className: "roads" },
   "Street lighting": { icon: "💡", className: "lighting" },
@@ -106,59 +21,21 @@ const dialog = document.querySelector("#report-dialog");
 let showAllIssues = false;
 let toastTimer;
 
-function daysAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString();
-}
+let issues = [];
 
-function loadIssues() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === null) return [...sampleIssues];
-    const parsed = JSON.parse(saved);
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some((issue) => !isValidIssue(issue))
-    ) {
-      throw new Error("Saved issue data has an invalid format.");
-    }
-    return parsed;
-  } catch (error) {
-    console.error("Unable to load saved CivicPulse reports.", error);
-    showToast(
-      "Saved reports could not be loaded. Your new reports may not persist.",
-    );
-    return [...sampleIssues];
+async function apiRequest(path, options) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || "The server could not complete the request.");
   }
-}
-
-function isValidIssue(issue) {
-  return (
-    issue !== null &&
-    typeof issue === "object" &&
-    typeof issue.id === "string" &&
-    typeof issue.title === "string" &&
-    typeof issue.category === "string" &&
-    typeof issue.location === "string" &&
-    statusSequence.includes(issue.status) &&
-    typeof issue.createdAt === "string"
-  );
-}
-
-let issues = loadIssues();
-
-function saveIssues() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(issues));
-    return true;
-  } catch (error) {
-    console.error("Unable to save CivicPulse reports.", error);
-    showToast(
-      "Your browser could not save this change. Check available storage and try again.",
-    );
-    return false;
-  }
+  return result;
 }
 
 function escapeHtml(value) {
@@ -302,24 +179,36 @@ document.querySelector("#load-more").addEventListener("click", () => {
 searchInput.addEventListener("input", renderIssues);
 statusFilter.addEventListener("change", renderIssues);
 
-issueList.addEventListener("click", (event) => {
+issueList.addEventListener("click", async (event) => {
   const statusButton = event.target.closest("[data-status-id]");
   if (statusButton) {
     const issue = issues.find(
       (item) => item.id === statusButton.dataset.statusId,
     );
     if (!issue) return;
-    const previousStatus = issue.status;
-    issue.status =
+    const status =
       statusSequence[
         (statusSequence.indexOf(issue.status) + 1) % statusSequence.length
       ];
-    if (!saveIssues()) {
-      issue.status = previousStatus;
-      return;
+    statusButton.disabled = true;
+    try {
+      const updatedIssue = await apiRequest(
+        `/api/issues/${encodeURIComponent(issue.id)}/status`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        },
+      );
+      issues = issues.map((item) =>
+        item.id === updatedIssue.id ? updatedIssue : item,
+      );
+      render();
+      showToast(`Issue marked ${statusLabels[updatedIssue.status].toLowerCase()}.`);
+    } catch (error) {
+      console.error("Unable to update CivicPulse issue status.", error);
+      showToast("The issue status could not be updated. Please try again.");
+      statusButton.disabled = false;
     }
-    render();
-    showToast(`Issue marked ${statusLabels[issue.status].toLowerCase()}.`);
     return;
   }
   const detailsButton = event.target.closest("[data-description-id]");
@@ -336,34 +225,51 @@ dialog.addEventListener("click", (event) => {
   if (event.target === dialog) dialog.close();
 });
 
-document.querySelector("#report-form").addEventListener("submit", (event) => {
+document.querySelector("#report-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   if (!form.reportValidity()) return;
   const values = new FormData(form);
   const issue = {
-    id: `CP-${String(Date.now()).slice(-6)}`,
     title: String(values.get("title")).trim(),
     category: String(values.get("category")),
     priority: String(values.get("priority")),
     location: String(values.get("location")).trim(),
     description: String(values.get("description")).trim(),
-    status: "open",
-    createdAt: new Date().toISOString(),
   };
-  issues.unshift(issue);
-  if (!saveIssues()) {
-    issues.shift();
-    return;
+  const submitButton = form.querySelector('button[type="submit"]');
+  const errorMessage = document.querySelector("#form-error");
+  submitButton.disabled = true;
+  errorMessage.classList.add("hidden");
+  try {
+    const createdIssue = await apiRequest("/api/issues", {
+      method: "POST",
+      body: JSON.stringify(issue),
+    });
+    issues.unshift(createdIssue);
+    form.reset();
+    dialog.close();
+    showAllIssues = false;
+    searchInput.value = "";
+    statusFilter.value = "all";
+    render();
+    showToast("Report submitted. The city team will take a look.");
+  } catch (error) {
+    console.error("Unable to submit CivicPulse report.", error);
+    errorMessage.textContent =
+      "Your report could not be submitted. Please try again.";
+    errorMessage.classList.remove("hidden");
+  } finally {
+    submitButton.disabled = false;
   }
-  form.reset();
-  document.querySelector("#form-error").classList.add("hidden");
-  dialog.close();
-  showAllIssues = false;
-  searchInput.value = "";
-  statusFilter.value = "all";
-  render();
-  showToast("Report submitted. The city team will take a look.");
 });
 
-render();
+apiRequest("/api/issues")
+  .then((loadedIssues) => {
+    issues = loadedIssues;
+    render();
+  })
+  .catch((error) => {
+    console.error("Unable to load CivicPulse reports.", error);
+    showToast("Reports could not be loaded. Check that the backend is running.");
+  });
